@@ -21,7 +21,7 @@ flowchart TB
     site["<b>Website</b><br/>display only"]
   end
 
-  subgraph lib["@fabula-ts/core — written once, runs everywhere"]
+  subgraph lib["fabula-ts — written once, runs everywhere"]
     direction TB
     atoms["<b>Atoms</b><br/>what the UI subscribes to.<br/>Refresh themselves when data changes."]
     rules["<b>Bookshelf rules</b><br/>add · move · remove · list<br/><i>a book can be on many shelves, each in its own order</i>"]
@@ -90,9 +90,20 @@ affected. Nothing has to remember to do it by hand.
 
 ## Packages
 
-| Package | Published | Needs |
-| --- | --- | --- |
-| `@fabula-ts/core` | yes | `effect` only — safe in a browser |
-| `@fabula-ts/sql` | yes | core + SQLite — server-side only |
-| `apps/server` | no | core + sql |
+One package, `fabula-ts`, with `effect` as its only peer dependency and no dependencies
+at all. Import only what you need:
 
+| Module | Contents |
+| --- | --- |
+| `fabula-ts` | model, errors, ordering, the repository interface, the rules |
+| `fabula-ts/sql` | the SQL implementation, written against `SqlClient` — no database driver |
+| `fabula-ts/atoms` | `makeBookshelfAtoms` |
+| `fabula-ts/rpc` | the wire contract |
+| `fabula-ts/testing` | the in-memory implementation |
+
+A browser app importing `fabula-ts` never resolves `fabula-ts/sql`, so server-only code
+stays out of the build by module resolution. `sideEffects: false` strips unused exports
+on top of that.
+
+`apps/server` stays private and picks the driver layer — `@effect/sql-sqlite-bun` today,
+Postgres or libSQL later, without the library changing.
