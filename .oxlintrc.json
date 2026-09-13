@@ -8,6 +8,7 @@
   },
   "ignorePatterns": [".vendor", "dist"],
   "rules": {
+    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
     "no-restricted-imports": [
       "error",
       {
