@@ -27,6 +27,17 @@ export const ShelfId = Schema.NonEmptyString.pipe(Schema.brand("ShelfId"));
 export type ShelfId = typeof ShelfId.Type;
 
 /**
+ * A book's rating, in half stars from 0.5 to 5.
+ *
+ * Zero is not a rating: an unrated book has no `rating` key at all.
+ */
+export const Rating = Schema.Finite.check(
+  Schema.isBetween({ minimum: 0.5, maximum: 5 }),
+  Schema.isMultipleOf(0.5),
+);
+export type Rating = typeof Rating.Type;
+
+/**
  * A book in the library, independent of any shelf.
  *
  * Fixed and closed (ADR 3): hosts cannot add fields. `authors` may be empty, for
@@ -38,6 +49,7 @@ export const Book = Schema.Struct({
   id: BookId,
   title: Schema.NonEmptyString,
   authors: Schema.Array(Schema.NonEmptyString),
+  rating: Schema.optionalKey(Rating),
   isbn: Schema.optionalKey(Schema.String),
   coverUrl: Schema.optionalKey(Schema.String),
   addedAt: Schema.DateTimeUtc,
