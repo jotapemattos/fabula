@@ -11,7 +11,9 @@
  * and SQLite's default `BINARY` collation both sort these keys correctly with no
  * parsing and no special collation.
  */
-import { Brand, Data, Schema } from "effect";
+import * as Brand from "effect/Brand";
+import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
 const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 
