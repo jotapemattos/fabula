@@ -11,19 +11,8 @@ import * as Layer from "effect/Layer";
 import { BookRepository } from "../BookRepository.ts";
 import type { ShelfBook } from "../BookRepository.ts";
 import { ShelfNotFound } from "../Errors.ts";
-import type { Book, ShelfEntry, ShelfId } from "../Model.ts";
-
-/**
- * The state a repository starts with.
- *
- * Shaped like storage: three flat collections. `shelves` is listed separately from
- * `entries` so that a shelf with no books still exists.
- */
-export interface Seed {
-  readonly shelves: ReadonlyArray<ShelfId>;
-  readonly books: ReadonlyArray<Book>;
-  readonly entries: ReadonlyArray<ShelfEntry>;
-}
+import type { ShelfId } from "../Model.ts";
+import type { Seed } from "./Conformance.ts";
 
 /**
  * A seed that describes state no real storage could hold.

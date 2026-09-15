@@ -3,7 +3,8 @@ import { Cause, DateTime, Effect, Exit, Schema } from "effect";
 import { BookRepository } from "../src/BookRepository.ts";
 import { Book, BookId, ShelfEntry, ShelfId } from "../src/Model.ts";
 import { InvalidSeed, layer } from "../src/testing/InMemoryBookRepository.ts";
-import type { Seed } from "../src/testing/InMemoryBookRepository.ts";
+import * as Conformance from "../src/testing/Conformance.ts";
+import type { Seed } from "../src/testing/Conformance.ts";
 
 // The port's contract is checked by the conformance suite. These tests cover only
 // what is specific to the in-memory implementation: rejecting a broken seed.
@@ -21,7 +22,12 @@ const book = Schema.decodeSync(Book)({
 const unknownBook = Schema.decodeSync(BookId)("unknown-book");
 
 const entry = (overrides: Partial<Record<keyof ShelfEntry, string>> = {}): ShelfEntry =>
-  Schema.decodeSync(ShelfEntry)({ shelfId: shelf, bookId: book.id, position: "k", ...overrides });
+  Schema.decodeSync(ShelfEntry)({
+    shelfId: shelf,
+    bookId: book.id,
+    position: "k",
+    ...overrides,
+  });
 
 /** Builds the layer by using it, and returns how the build ended. */
 const build = (seed: Seed) =>
@@ -45,7 +51,11 @@ const assertInvalidSeed = (exit: Exit.Exit<unknown, unknown>, detail: string): v
 describe("InMemoryBookRepository.layer", () => {
   it.effect("builds from a consistent seed", () =>
     Effect.gen(function* () {
-      const exit = yield* build({ shelves: [shelf], books: [book], entries: [entry()] });
+      const exit = yield* build({
+        shelves: [shelf],
+        books: [book],
+        entries: [entry()],
+      });
       assert.isTrue(Exit.isSuccess(exit));
     }),
   );
@@ -82,4 +92,10 @@ describe("InMemoryBookRepository.layer", () => {
       assertInvalidSeed(exit, "more than once");
     }),
   );
+});
+
+describe("InMemoryBookRepository conformance", () => {
+  for (const { name, seed, test } of Conformance.cases) {
+    it.effect(name, () => test.pipe(Effect.provide(layer(seed))));
+  }
 });

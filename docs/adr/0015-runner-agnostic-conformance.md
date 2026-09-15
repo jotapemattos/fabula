@@ -22,12 +22,16 @@ The suite exports named test cases as data, not as test registrations:
 ```ts
 interface ConformanceCase {
   readonly name: string;
-  readonly test: Effect.Effect<void, unknown, BookRepository>;
+  readonly seed: Seed;
+  readonly test: Effect.Effect<void, BookshelfError, BookRepository>;
 }
 ```
 
 Each case asks for `BookRepository` from context, and the caller gives each one a fresh
-build of its layer, so cases never share state. A failed check is a defect raised by the
+build of its layer from the case's own `seed`, so cases never share state. The seed travels
+with the case because the port has no way to create shelves: every implementation must be
+able to start from one. A case fails only with `BookshelfError`, the closed set every port
+method already uses (ADR 6). A failed check is a defect raised by the
 suite's own assertion helpers, not a runner's `expect`. The suite imports nothing but
 `effect` and `fabula-ts` itself.
 
@@ -35,7 +39,7 @@ The caller decides how the cases run. Fabula's own tests loop over them with
 `@effect/vitest`, which stays a dev dependency:
 
 ```ts
-for (const { name, test } of conformance) {
+for (const { name, seed, test } of Conformance.cases) {
   it.effect(name, () => test.pipe(Effect.provide(InMemoryBookRepository.layer(seed))));
 }
 ```
