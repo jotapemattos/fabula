@@ -19,3 +19,4 @@ was chosen over, and what it costs.
 | [12](0012-workspace-layout.md) | ~~Bun workspace, published under `@fabula-ts`~~ — superseded |
 | [13](0013-toolchain.md) | Bun, Vitest, tsdown, changesets, Effect pinned |
 | [14](0014-single-package.md) | One package with subpath modules — supersedes 12 |
+| [15](0015-runner-agnostic-conformance.md) | The conformance suite is runner-agnostic |
