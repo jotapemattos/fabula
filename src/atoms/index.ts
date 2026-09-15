@@ -5,7 +5,7 @@ import * as Bookshelf from "../Bookshelf";
 import type { ShelfId } from "../Model";
 
 export const makeBookshelfAtoms = (layer: Layer.Layer<BookRepository>) => {
-  const bookshelfLayer = Bookshelf.layer.pipe(Layer.provide(Layer.fresh(layer)));
+  const bookshelfLayer = Layer.fresh(Bookshelf.layer.pipe(Layer.provide(layer)));
   const runtime = Atom.runtime(bookshelfLayer);
   const shelf = Atom.family((shelfId: ShelfId) =>
     runtime.atom(Bookshelf.Bookshelf.use((bookshelf) => bookshelf.listShelf(shelfId))),

@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { DateTime, Effect, Layer, Schema } from "effect";
+import { DateTime, Effect, Schema } from "effect";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { makeBookshelfAtoms } from "../src/atoms/index.ts";
 import { ShelfNotFound } from "../src/Errors.ts";
@@ -58,18 +58,31 @@ describe("makeBookshelfAtoms", () => {
     }),
   );
 
-  it.effect("gives each call its own state, even with the same layer and registry", () =>
+  it.effect("gives each call its own state, even in the same registry", () =>
     Effect.gen(function* () {
-      let builds = 0;
-      const counted = Layer.merge(seededLayer(), Layer.effectDiscard(Effect.sync(() => builds++)));
-      const first = makeBookshelfAtoms(counted);
-      const second = makeBookshelfAtoms(counted);
+      // Same shelf id, different books, so reading the other call's state shows up.
+      const first = makeBookshelfAtoms(
+        inMemoryLayer({ shelves: [sciFi], books: [dune], entries: [entry(sciFi, dune, "a")] }),
+      );
+      const second = makeBookshelfAtoms(
+        inMemoryLayer({
+          shelves: [sciFi],
+          books: [hyperion],
+          entries: [entry(sciFi, hyperion, "a")],
+        }),
+      );
       const registry = AtomRegistry.make();
 
-      assert.notStrictEqual(first.shelf(sciFi), second.shelf(sciFi));
-      yield* AtomRegistry.getResult(registry, first.shelf(sciFi));
-      yield* AtomRegistry.getResult(registry, second.shelf(sciFi));
-      assert.strictEqual(builds, 2);
+      const firstBooks = yield* AtomRegistry.getResult(registry, first.shelf(sciFi));
+      const secondBooks = yield* AtomRegistry.getResult(registry, second.shelf(sciFi));
+      assert.deepStrictEqual(
+        firstBooks.map((book) => book.id),
+        [dune.id],
+      );
+      assert.deepStrictEqual(
+        secondBooks.map((book) => book.id),
+        [hyperion.id],
+      );
       registry.dispose();
     }),
   );
