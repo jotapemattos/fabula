@@ -8,13 +8,14 @@
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { BookRepository } from "../BookRepository";
 import type { ShelfBook } from "../BookRepository";
 import type { BookshelfError } from "../Errors";
 import { BookId, ShelfId } from "../Model";
 import type { Book, ShelfEntry } from "../Model";
-import { Position } from "../Position";
+import { between, Position } from "../Position";
 
 /**
  * The state a repository starts with.
@@ -76,6 +77,9 @@ const makeBook = (id: string, title: string): Book => ({
 const dune = makeBook("dune", "Dune");
 const foundation = makeBook("foundation", "Foundation");
 const hyperion = makeBook("hyperion", "Hyperion");
+
+/** Never seeded: the write cases store it, so finding it proves the write happened. */
+const neuromancer = makeBook("neuromancer", "Neuromancer");
 
 const entry = (shelfId: ShelfId, book: Book, position: string): ShelfEntry => ({
   shelfId,
@@ -161,10 +165,100 @@ const emptyVersusMissing: ConformanceCase = {
   }),
 };
 
+const storesBookAndEntry: ConformanceCase = {
+  name: "stores a book with its entry, and reads both back",
+  seed: {
+    shelves: [sciFi],
+    books: [dune, foundation],
+    // Seeded out of order, so the stored book ending up last cannot be insertion order.
+    entries: [entry(sciFi, foundation, "k"), entry(sciFi, dune, "a")],
+  },
+  test: Effect.gen(function* () {
+    const repository = yield* BookRepository;
+    const last = yield* repository.lastPosition(sciFi);
+    yield* repository.storeBook({
+      book: neuromancer,
+      entry: {
+        shelfId: sciFi,
+        bookId: neuromancer.id,
+        position: between(Option.getOrUndefined(last), undefined),
+      },
+    });
+
+    const rows = yield* repository.listShelfEntries(sciFi);
+    yield* checkBooks(sciFi, rows, [dune, foundation, neuromancer]);
+
+    // The book itself must come back, not only an entry pointing at its id.
+    const stored = rows.at(-1)?.book;
+    yield* check(
+      stored?.title === neuromancer.title,
+      `shelf ${sciFi}: expected the stored book's title, got ${JSON.stringify(stored?.title)}`,
+    );
+
+    // Only a ShelfNotFound for this shelf passes: a success fails the check, and any
+    // other error fails the case through the error channel.
+    const reportedMissing = yield* repository
+      .storeBook({
+        book: hyperion,
+        entry: { shelfId: missing, bookId: hyperion.id, position: between(undefined, undefined) },
+      })
+      .pipe(
+        Effect.as(false),
+        Effect.catchTag("ShelfNotFound", (error) => Effect.succeed(error.shelfId === missing)),
+      );
+    yield* check(reportedMissing, `shelf ${missing}: expected ShelfNotFound naming it`);
+  }),
+};
+
+const lastPositionFollowsOrder: ConformanceCase = {
+  name: "reports the last position in order, and none for an empty shelf",
+  seed: {
+    shelves: [sciFi, empty],
+    books: [dune, foundation, hyperion],
+    // Seeded out of order: the entry added last is not the one that sorts last.
+    entries: [entry(sciFi, hyperion, "t"), entry(sciFi, dune, "a"), entry(sciFi, foundation, "k")],
+  },
+  test: Effect.gen(function* () {
+    const repository = yield* BookRepository;
+
+    // Compared against the listing's own last row, never against a literal key.
+    const rows = yield* repository.listShelfEntries(sciFi);
+    const last = yield* repository.lastPosition(sciFi);
+    yield* check(
+      Option.getOrUndefined(last) === rows.at(-1)?.entry.position,
+      `shelf ${sciFi}: the last position should be the position of the last book listed`,
+    );
+
+    yield* check(
+      Option.isNone(yield* repository.lastPosition(empty)),
+      `shelf ${empty}: an existing shelf with no books should have no last position`,
+    );
+
+    // A book stored past the end becomes the shelf's new last position.
+    const appended = between(Option.getOrUndefined(last), undefined);
+    yield* repository.storeBook({
+      book: neuromancer,
+      entry: { shelfId: sciFi, bookId: neuromancer.id, position: appended },
+    });
+    yield* check(
+      Option.getOrUndefined(yield* repository.lastPosition(sciFi)) === appended,
+      `shelf ${sciFi}: the last position should follow the newest entry`,
+    );
+
+    const reportedMissing = yield* repository.lastPosition(missing).pipe(
+      Effect.as(false),
+      Effect.catchTag("ShelfNotFound", (error) => Effect.succeed(error.shelfId === missing)),
+    );
+    yield* check(reportedMissing, `shelf ${missing}: expected ShelfNotFound naming it`);
+  }),
+};
+
 /** Every conformance case. Run each against a fresh layer built from its own seed. */
 export const cases: ReadonlyArray<ConformanceCase> = [
   positionOrder,
   independentOrder,
   bookOnTwoShelves,
   emptyVersusMissing,
+  storesBookAndEntry,
+  lastPositionFollowsOrder,
 ];

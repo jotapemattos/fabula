@@ -8,6 +8,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { BookRepository } from "../BookRepository.ts";
 import type { ShelfBook } from "../BookRepository.ts";
 import { ShelfNotFound } from "../Errors.ts";
@@ -89,6 +90,25 @@ export const layer = (seed: Seed): Layer.Layer<BookRepository> =>
             return yield* new ShelfNotFound({ shelfId });
           }
           return rows.filter((row) => row.entry.shelfId === shelfId).toSorted(byPosition);
+        }),
+
+      lastPosition: (shelfId) =>
+        Effect.gen(function* () {
+          if (!shelves.has(shelfId)) {
+            return yield* new ShelfNotFound({ shelfId });
+          }
+          const shelfRows = rows
+            .filter((row) => row.entry.shelfId === shelfId)
+            .toSorted(byPosition);
+          const last = shelfRows.at(-1);
+          return last === undefined ? Option.none() : Option.some(last.entry.position);
+        }),
+      storeBook: (row) =>
+        Effect.gen(function* () {
+          if (!shelves.has(row.entry.shelfId)) {
+            return yield* new ShelfNotFound({ shelfId: row.entry.shelfId });
+          }
+          rows.push(row);
         }),
     });
   });

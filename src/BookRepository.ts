@@ -5,9 +5,11 @@
  * moving storage from memory to SQL to a server is a layer swap (ADRs 2, 9).
  */
 import * as Context from "effect/Context";
+import type * as Option from "effect/Option";
 import type { Book, ShelfEntry, ShelfId } from "./Model";
 import type * as Effect from "effect/Effect";
 import type { RepositoryUnavailable, ShelfNotFound } from "./Errors";
+import type { Position } from "./Position";
 
 /**
  * One row of a shelf listing: a book, and the entry that places it on the shelf.
@@ -51,5 +53,27 @@ export class BookRepository extends Context.Service<
     readonly listShelfEntries: (
       shelfId: ShelfId,
     ) => Effect.Effect<ReadonlyArray<ShelfBook>, ShelfNotFound | RepositoryUnavailable>;
+
+    /**
+     * The position of the shelf's last book, in position order.
+     *
+     * `Option.none()` for an existing shelf with no books; `ShelfNotFound` for a
+     * shelf that does not exist. It is the bound a new book is placed after, and
+     * asks for the one key that answers it, so storage need not read every row.
+     */
+    readonly lastPosition: (
+      shelfId: ShelfId,
+    ) => Effect.Effect<Option.Option<Position>, ShelfNotFound | RepositoryUnavailable>;
+
+    /**
+     * Stores a new book together with the entry that places it on a shelf.
+     *
+     * Both in one call, so a book with no entry — or an entry pointing at no book
+     * — can never exist, whatever the storage. Fails with `ShelfNotFound` if the
+     * shelf does not exist.
+     */
+    readonly storeBook: (
+      row: ShelfBook,
+    ) => Effect.Effect<void, ShelfNotFound | RepositoryUnavailable>;
   }
 >()("fabula-ts/BookRepository") {}
