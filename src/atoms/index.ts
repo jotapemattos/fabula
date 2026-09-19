@@ -5,6 +5,7 @@
  * bound to a layer at module load (ADR 8). Published as `fabula-ts/atoms`, so
  * hosts that do not use atoms never load the reactivity modules.
  */
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 import type { BookRepository } from "../BookRepository";
@@ -45,8 +46,18 @@ export const makeBookshelfAtoms = (layer: Layer.Layer<BookRepository>) => {
     runtime.atom(Bookshelf.Bookshelf.use((bookshelf) => bookshelf.listShelf(shelfId))),
   );
 
-  const addBook = runtime.fn((input: { readonly shelfId: ShelfId; readonly draft: BookDraft }) =>
-    Bookshelf.Bookshelf.use((bookshelf) => bookshelf.addBook(input.shelfId, input.draft)),
+  // A write must not be lost to the UI's lifecycle. An action atom interrupts its
+  // running call when called again, so the write is uninterruptible: the first add
+  // still lands, and the atom reports the latest call. Kept alive, so unmounting the
+  // component that started it does not dispose the atom either. Not `concurrent`:
+  // in this RC that mode reports the first running call's value, and loses the
+  // result of a call that finishes before it is joined.
+  const addBook = Atom.keepAlive(
+    runtime.fn((input: { readonly shelfId: ShelfId; readonly draft: BookDraft }) =>
+      Bookshelf.Bookshelf.use((bookshelf) =>
+        Effect.uninterruptible(bookshelf.addBook(input.shelfId, input.draft)),
+      ),
+    ),
   );
 
   return { shelf, addBook };

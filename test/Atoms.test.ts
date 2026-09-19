@@ -152,6 +152,50 @@ describe("makeBookshelfAtoms", () => {
       registry.dispose();
     }),
   );
+
+  it.effect("keeps an add running when a second one starts", () =>
+    Effect.gen(function* () {
+      const release = Latch.makeUnsafe();
+      const { shelf, addBook } = makeBookshelfAtoms(heldWrites(release));
+      const registry = AtomRegistry.make();
+      const unsubscribe = registry.subscribe(addBook, () => {});
+
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "First", authors: [] } });
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "Second", authors: [] } });
+      yield* release.open;
+      yield* AtomRegistry.getResult(registry, addBook, { suspendOnWaiting: true });
+
+      const books = yield* AtomRegistry.getResult(registry, shelf(sciFi));
+      assert.deepStrictEqual(books.map((book) => book.title).slice(-2), ["First", "Second"]);
+
+      unsubscribe();
+      registry.dispose();
+    }),
+  );
+
+  // Live time: the registry removes an unsubscribed atom on a later tick, and the
+  // write must be released only after that removal has had its chance to cancel it.
+  it.live("keeps an add running after its last subscriber leaves", () =>
+    Effect.gen(function* () {
+      const release = Latch.makeUnsafe();
+      const { shelf, addBook } = makeBookshelfAtoms(heldWrites(release));
+      const registry = AtomRegistry.make();
+      const unsubscribe = registry.subscribe(addBook, () => {});
+
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "Neuromancer", authors: [] } });
+      // The component that started the add unmounts before the write lands.
+      unsubscribe();
+      yield* Effect.sleep("50 millis");
+      yield* release.open;
+      yield* Effect.sleep("50 millis");
+
+      // Read without touching `addBook`, which would run the write again.
+      const books = yield* AtomRegistry.getResult(registry, shelf(sciFi));
+      assert.strictEqual(books.at(-1)?.title, "Neuromancer");
+
+      registry.dispose();
+    }),
+  );
 });
 
 const describeResult = (result: AsyncResult.AsyncResult<unknown, unknown>): string =>
