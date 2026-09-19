@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
+  "plugins": ["import", "typescript", "unicorn"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "ignorePatterns": [".vendor", "dist"],
+  "rules": {
+    "no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["**/sql/**", "**/rpc/**"],
+            "message": "ADR 14: the root module must not import from a server-only subpath."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/sql/**", "src/rpc/**", "test/**"],
+      "rules": { "no-restricted-imports": "off" }
+    }
+  ]
+}

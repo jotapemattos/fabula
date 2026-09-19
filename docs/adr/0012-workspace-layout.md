@@ -1,6 +1,6 @@
 # 12. Bun workspace, published under `@fabula-ts`
 
-Status: Accepted — 2026-09-08
+Status: Superseded by [ADR 14](0014-single-package.md) — 2026-09-10
 
 ## Context
 

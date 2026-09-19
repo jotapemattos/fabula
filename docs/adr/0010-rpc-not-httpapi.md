@@ -10,7 +10,7 @@ function-call semantics.
 
 ## Decision
 
-`RpcGroup` from `effect/unstable/rpc`. The contract lives in `@fabula-ts/core`, which is
+`RpcGroup` from `effect/unstable/rpc`. The contract lives in `fabula-ts/rpc`, which is
 `effect`-only, so both sides import it.
 
 ## Consequences

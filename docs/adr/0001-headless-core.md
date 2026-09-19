@@ -9,7 +9,7 @@ and a domain that imports React cannot be tested without rendering.
 
 ## Decision
 
-`@fabula-ts/core` depends on `effect` alone. `Atom` lives in core Effect
+`fabula-ts` depends on `effect` alone. `Atom` lives in core Effect
 (`effect/unstable/reactivity/Atom`), so even the reactive layer needs no React.
 `@effect/atom-react` is the *host's* dependency, not ours.
 
