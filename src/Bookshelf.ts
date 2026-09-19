@@ -9,9 +9,13 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ShelfId, Book } from "./Model";
+import type { ShelfId, Book, BookDraft } from "./Model";
 import type { RepositoryUnavailable, ShelfNotFound } from "./Errors";
 import { BookRepository } from "./BookRepository";
+import { BookIds } from "./BookIds";
+import * as DateTime from "effect/DateTime";
+import { between } from "./Position";
+import * as Option from "effect/Option";
 
 /**
  * The operations on a bookshelf, provided by `layer`.
@@ -33,6 +37,10 @@ export class Bookshelf extends Context.Service<
     readonly listShelf: (
       shelfId: ShelfId,
     ) => Effect.Effect<ReadonlyArray<Book>, ShelfNotFound | RepositoryUnavailable>;
+    readonly addBook: (
+      shelfId: ShelfId,
+      draft: BookDraft,
+    ) => Effect.Effect<Book, ShelfNotFound | RepositoryUnavailable>;
   }
 >()("fabula-ts/Bookshelf") {}
 
@@ -50,11 +58,30 @@ export const layer = Layer.effect(
   Bookshelf,
   Effect.gen(function* () {
     const repository = yield* BookRepository;
+    const ids = yield* BookIds;
     return Bookshelf.of({
       listShelf: (shelfId) =>
         repository
           .listShelfEntries(shelfId)
           .pipe(Effect.map((rows) => rows.map((row) => row.book))),
+      addBook: (shelfId, draft) =>
+        Effect.gen(function* () {
+          const last = yield* repository.lastPosition(shelfId);
+          const book: Book = {
+            ...draft,
+            id: yield* ids.next,
+            addedAt: yield* DateTime.now,
+          };
+          yield* repository.storeBook({
+            book,
+            entry: {
+              shelfId,
+              bookId: book.id,
+              position: between(Option.getOrUndefined(last), undefined),
+            },
+          });
+          return book;
+        }),
     });
   }),
 );

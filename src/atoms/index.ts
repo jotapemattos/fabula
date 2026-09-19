@@ -10,6 +10,7 @@ import { Atom } from "effect/unstable/reactivity";
 import type { BookRepository } from "../BookRepository";
 import * as Bookshelf from "../Bookshelf";
 import type { ShelfId } from "../Model";
+import * as BookIds from "../BookIds";
 
 /**
  * Builds the bookshelf's atoms on top of a host-supplied repository layer.
@@ -30,7 +31,7 @@ export const makeBookshelfAtoms = (layer: Layer.Layer<BookRepository>) => {
   // A registry memoizes layers by identity, and `Bookshelf.layer` is one shared
   // constant. Without `fresh` around the whole stack, a second call in the same
   // registry would reuse the first call's `Bookshelf`, and read its repository.
-  const bookshelfLayer = Layer.fresh(Bookshelf.layer.pipe(Layer.provide(layer)));
+  const bookshelfLayer = Layer.fresh(Bookshelf.layer.pipe(Layer.provide([layer, BookIds.layer])));
   const runtime = Atom.runtime(bookshelfLayer);
   const shelf = Atom.family((shelfId: ShelfId) =>
     runtime.atom(Bookshelf.Bookshelf.use((bookshelf) => bookshelf.listShelf(shelfId))),

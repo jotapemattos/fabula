@@ -56,6 +56,7 @@ export const Book = Schema.Struct({
 });
 
 export type Book = typeof Book.Type;
+export type BookDraft = Omit<Book, "id" | "addedAt">;
 
 /**
  * Places one book on one shelf, at a position in that shelf's order.
