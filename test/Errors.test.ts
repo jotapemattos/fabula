@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { BookNotFound, RepositoryUnavailable, ShelfNotFound } from "../src/Errors.ts";
+import { BookNotFound, InvalidBook, RepositoryUnavailable, ShelfNotFound } from "../src/Errors.ts";
 import type { BookshelfError } from "../src/Errors.ts";
 import { BookId, ShelfId } from "../src/Model.ts";
 
@@ -14,6 +14,7 @@ const throughJsonText = (encoded: unknown): unknown => JSON.parse(JSON.stringify
 const ShelfNotFoundJson = Schema.toCodecJson(ShelfNotFound);
 const BookNotFoundJson = Schema.toCodecJson(BookNotFound);
 const RepositoryUnavailableJson = Schema.toCodecJson(RepositoryUnavailable);
+const InvalidBookJson = Schema.toCodecJson(InvalidBook);
 
 /** Exhaustive over the union: adding an error without handling it here fails to compile. */
 const describeError = (error: BookshelfError): string => {
@@ -22,6 +23,8 @@ const describeError = (error: BookshelfError): string => {
       return `shelf ${error.shelfId}`;
     case "BookNotFound":
       return `book ${error.bookId}`;
+    case "InvalidBook":
+      return `invalid: ${error.reason}`;
     case "RepositoryUnavailable":
       return "storage";
   }
@@ -74,6 +77,23 @@ describe("BookNotFound", () => {
     const decoded = Schema.decodeUnknownSync(BookNotFoundJson)(json);
     assert.instanceOf(decoded, BookNotFound);
     assert.strictEqual(decoded.bookId, bookId);
+  });
+});
+
+describe("InvalidBook", () => {
+  const error = new InvalidBook({ reason: "title must not be empty" });
+
+  it("is tagged and carries the reason", () => {
+    assert.strictEqual(error._tag, "InvalidBook");
+    assert.instanceOf(error, Error);
+    assert.include(error.message, "title must not be empty");
+  });
+
+  it("survives a JSON round trip", () => {
+    const json = throughJsonText(Schema.encodeSync(InvalidBookJson)(error));
+    const decoded = Schema.decodeUnknownSync(InvalidBookJson)(json);
+    assert.instanceOf(decoded, InvalidBook);
+    assert.strictEqual(decoded.reason, "title must not be empty");
   });
 });
 
@@ -133,6 +153,7 @@ describe("BookshelfError", () => {
   it("can be matched exhaustively on _tag", () => {
     assert.strictEqual(describeError(new ShelfNotFound({ shelfId })), "shelf shelf-1");
     assert.strictEqual(describeError(new BookNotFound({ bookId })), "book book-1");
+    assert.strictEqual(describeError(new InvalidBook({ reason: "empty" })), "invalid: empty");
     assert.strictEqual(describeError(new RepositoryUnavailable({ cause: "x" })), "storage");
   });
 });

@@ -62,8 +62,25 @@ export class RepositoryUnavailable extends Schema.TaggedError<RepositoryUnavaila
 }
 
 /**
+ * A book that the `Book` schema rejects: an empty title or author, or a rating out
+ * of range.
+ *
+ * Raised by operations that create a book from caller input, such as `addBook`,
+ * before anything is stored. Types cannot rule these values out, and storage that
+ * decodes its rows would fail on every later read of a book stored with them.
+ * `reason` is the schema's description of what is wrong, for logs and developers.
+ */
+export class InvalidBook extends Schema.TaggedError<InvalidBook>()("InvalidBook", {
+  reason: Schema.String,
+}) {
+  override get message() {
+    return `Invalid book: ${this.reason}`;
+  }
+}
+
+/**
  * Every error a bookshelf operation or `BookRepository` method can fail with.
  *
  * Match on `_tag` to handle each one.
  */
-export type BookshelfError = ShelfNotFound | BookNotFound | RepositoryUnavailable;
+export type BookshelfError = ShelfNotFound | BookNotFound | InvalidBook | RepositoryUnavailable;

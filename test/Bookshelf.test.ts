@@ -3,7 +3,9 @@ import { Brand, DateTime, Effect, Layer, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { BookIds } from "../src/BookIds.ts";
 import { Bookshelf, layer as bookshelfLayer } from "../src/Bookshelf.ts";
-import { ShelfNotFound } from "../src/Errors.ts";
+import { BookRepository } from "../src/BookRepository.ts";
+import type { ShelfBook } from "../src/BookRepository.ts";
+import { InvalidBook, ShelfNotFound } from "../src/Errors.ts";
 import { Book, BookId, ShelfEntry, ShelfId } from "../src/Model.ts";
 import type { BookDraft } from "../src/Model.ts";
 import type { Seed } from "../src/testing/Conformance.ts";
@@ -59,17 +61,40 @@ const countingIds = Layer.sync(BookIds, () => {
 const TestLayer = bookshelfLayer.pipe(Layer.provide([inMemoryLayer(seed), countingIds]));
 
 /**
+ * The seeded store, recording every row it accepts in `stored`, so a test can see
+ * a write that no listing would show, such as a book stored on no shelf.
+ *
+ * Each `storeBook` yields to other fibers before storing, so two adds started
+ * together interleave between reading the last position and storing after it.
+ */
+const recording = (stored: Array<ShelfBook>) =>
+  Layer.effect(
+    BookRepository,
+    Effect.gen(function* () {
+      const repository = yield* BookRepository;
+      return BookRepository.of({
+        ...repository,
+        storeBook: (row) =>
+          Effect.yieldNow.pipe(
+            Effect.andThen(repository.storeBook(row)),
+            Effect.tap(() => Effect.sync(() => stored.push(row))),
+          ),
+      });
+    }),
+  ).pipe(Layer.provide(inMemoryLayer(seed)));
+
+/**
  * A layer per write test, so one test's books never reach another, with time
  * fixed at the epoch: `addedAt` is then an assertable value rather than "now".
  */
-const writeLayer = () =>
+const writeLayer = (stored: Array<ShelfBook> = []) =>
   Layer.merge(
-    bookshelfLayer.pipe(Layer.provide([inMemoryLayer(seed), countingIds])),
+    bookshelfLayer.pipe(Layer.provide([recording(stored), countingIds])),
     TestClock.layer(),
   );
 
-layer(TestLayer)("Bookshelf.listShelf", (it) => {
-  it.effect("lists a shelf's books in position order", () =>
+layer(TestLayer)("Bookshelf.listShelf", (shared) => {
+  shared.effect("lists a shelf's books in position order", () =>
     Effect.gen(function* () {
       const bookshelf = yield* Bookshelf;
       const books = yield* bookshelf.listShelf(sciFi);
@@ -80,7 +105,7 @@ layer(TestLayer)("Bookshelf.listShelf", (it) => {
     }),
   );
 
-  it.effect("lists an existing empty shelf as no books", () =>
+  shared.effect("lists an existing empty shelf as no books", () =>
     Effect.gen(function* () {
       const bookshelf = yield* Bookshelf;
       const books = yield* bookshelf.listShelf(empty);
@@ -88,7 +113,7 @@ layer(TestLayer)("Bookshelf.listShelf", (it) => {
     }),
   );
 
-  it.effect("fails with ShelfNotFound for a missing shelf", () =>
+  shared.effect("fails with ShelfNotFound for a missing shelf", () =>
     Effect.gen(function* () {
       const bookshelf = yield* Bookshelf;
       const error = yield* Effect.flip(bookshelf.listShelf(missing));
@@ -138,20 +163,57 @@ describe("Bookshelf.addBook", () => {
     }).pipe(Effect.provide(writeLayer())),
   );
 
-  it.effect("fails with ShelfNotFound for a missing shelf, and stores nothing", () =>
-    Effect.gen(function* () {
+  it.effect("fails with ShelfNotFound for a missing shelf, and stores nothing", () => {
+    const stored: Array<ShelfBook> = [];
+    return Effect.gen(function* () {
       const bookshelf = yield* Bookshelf;
       const error = yield* Effect.flip(bookshelf.addBook(missing, draft("Neuromancer")));
       assert.instanceOf(error, ShelfNotFound);
       assert.strictEqual(error.shelfId, missing);
+      assert.deepStrictEqual(stored, []);
+    }).pipe(Effect.provide(writeLayer(stored)));
+  });
 
-      // The book must not have landed anywhere else on the way out.
-      assert.deepStrictEqual(titles(yield* bookshelf.listShelf(sciFi)), [
-        "Dune",
-        "Foundation",
-        "Hyperion",
-      ]);
-      assert.deepStrictEqual(titles(yield* bookshelf.listShelf(empty)), []);
+  it.effect(
+    "fails with InvalidBook for a draft the Book schema rejects, and stores nothing",
+    () => {
+      const stored: Array<ShelfBook> = [];
+      return Effect.gen(function* () {
+        const bookshelf = yield* Bookshelf;
+        for (const invalid of [
+          { title: "", authors: [] },
+          { title: "Dune", authors: [""] },
+          { title: "Dune", authors: [], rating: 7 },
+        ]) {
+          const error = yield* Effect.flip(bookshelf.addBook(sciFi, invalid));
+          assert.instanceOf(error, InvalidBook, JSON.stringify(invalid));
+        }
+        assert.deepStrictEqual(stored, []);
+      }).pipe(Effect.provide(writeLayer(stored)));
+    },
+  );
+
+  it.effect("drops draft properties that Book does not have", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      // Passed through a variable, as form state would be: TypeScript allows the extra key.
+      const withNotes = { title: "Neuromancer", authors: [], notes: "lent to Ana" };
+      const added = yield* bookshelf.addBook(empty, withNotes);
+
+      assert.notProperty(added, "notes");
+      const [stored] = yield* bookshelf.listShelf(empty);
+      assert.notProperty(stored, "notes");
+    }).pipe(Effect.provide(writeLayer())),
+  );
+
+  it.effect("gives adds that run at the same time their own positions", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      yield* Effect.all(
+        [bookshelf.addBook(empty, draft("First")), bookshelf.addBook(empty, draft("Second"))],
+        { concurrency: "unbounded" },
+      );
+      assert.deepStrictEqual(titles(yield* bookshelf.listShelf(empty)), ["First", "Second"]);
     }).pipe(Effect.provide(writeLayer())),
   );
 

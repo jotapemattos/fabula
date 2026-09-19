@@ -7,15 +7,19 @@
  * (ADR 2).
  */
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ShelfId, Book, BookDraft } from "./Model";
-import type { RepositoryUnavailable, ShelfNotFound } from "./Errors";
-import { BookRepository } from "./BookRepository";
-import { BookIds } from "./BookIds";
-import * as DateTime from "effect/DateTime";
-import { between } from "./Position";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { BookIds } from "./BookIds";
+import { BookRepository } from "./BookRepository";
+import { InvalidBook } from "./Errors";
+import type { RepositoryUnavailable, ShelfNotFound } from "./Errors";
+import { Book } from "./Model";
+import type { BookDraft, ShelfId } from "./Model";
+import { between } from "./Position";
 
 /**
  * The operations on a bookshelf, provided by `layer`.
@@ -42,15 +46,23 @@ export class Bookshelf extends Context.Service<
      * Creates a book from `draft` and places it after every book on the shelf.
      *
      * The bookshelf assigns `id` (from `BookIds`) and `addedAt` (from the `Clock`),
-     * and succeeds with the book as stored. A shelf that does not exist fails with
-     * `ShelfNotFound`, and nothing is stored.
+     * and succeeds with the book as stored. The book is decoded before anything is
+     * stored: a draft the `Book` schema rejects fails with `InvalidBook`, and
+     * properties `Book` does not have are dropped. A shelf that does not exist
+     * fails with `ShelfNotFound`. Either way, nothing is stored.
      */
     readonly addBook: (
       shelfId: ShelfId,
       draft: BookDraft,
-    ) => Effect.Effect<Book, ShelfNotFound | RepositoryUnavailable>;
+    ) => Effect.Effect<Book, ShelfNotFound | InvalidBook | RepositoryUnavailable>;
   }
 >()("fabula-ts/Bookshelf") {}
+
+/**
+ * Checks a candidate against `Book`'s own type, rather than its JSON form, and
+ * keeps only `Book`'s properties.
+ */
+const decodeBook = Schema.decodeUnknownEffect(Schema.toType(Book));
 
 /**
  * Builds a `Bookshelf` on top of a `BookRepository` and a `BookIds`.
@@ -70,27 +82,40 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const repository = yield* BookRepository;
     const ids = yield* BookIds;
+
+    // Reading the last position and storing after it are two calls, so two adds
+    // running at once could both read the same position and store the same key.
+    // One add at a time closes that gap within this bookshelf. Storage shared
+    // between processes must still refuse a taken position (see `storeBook`).
+    const appends = yield* Semaphore.make(1);
+
     return Bookshelf.of({
       listShelf: (shelfId) =>
         repository
           .listShelfEntries(shelfId)
           .pipe(Effect.map((rows) => rows.map((row) => row.book))),
+
       addBook: (shelfId, draft) =>
         Effect.gen(function* () {
-          const last = yield* repository.lastPosition(shelfId);
-          const book: Book = {
+          const book = yield* decodeBook({
             ...draft,
             id: yield* ids.next,
             addedAt: yield* DateTime.now,
-          };
-          yield* repository.storeBook({
-            book,
-            entry: {
-              shelfId,
-              bookId: book.id,
-              position: between(Option.getOrUndefined(last), undefined),
-            },
-          });
+          }).pipe(Effect.mapError((error) => new InvalidBook({ reason: error.message })));
+
+          yield* appends.withPermit(
+            Effect.gen(function* () {
+              const last = yield* repository.lastPosition(shelfId);
+              yield* repository.storeBook({
+                book,
+                entry: {
+                  shelfId,
+                  bookId: book.id,
+                  position: between(Option.getOrUndefined(last), undefined),
+                },
+              });
+            }),
+          );
           return book;
         }),
     });
