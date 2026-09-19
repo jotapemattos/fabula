@@ -13,6 +13,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import { Reactivity } from "effect/unstable/reactivity";
 import { BookIds } from "./BookIds";
 import { BookRepository } from "./BookRepository";
 import { InvalidBook } from "./Errors";
@@ -55,8 +57,36 @@ export class Bookshelf extends Context.Service<
       shelfId: ShelfId,
       draft: BookDraft,
     ) => Effect.Effect<Book, ShelfNotFound | InvalidBook | RepositoryUnavailable>;
+
+    /**
+     * The books on a shelf, in position order, re-read whenever the shelf changes.
+     *
+     * Emits the current books, then a fresh list each time an operation on this
+     * shelf completes — `addBook`, today. A shelf that does not exist fails with
+     * `ShelfNotFound`, and the stream ends there: a missing shelf stays missing.
+     */
+    readonly shelfChanges: (
+      shelfId: ShelfId,
+    ) => Stream.Stream<ReadonlyArray<Book>, ShelfNotFound | RepositoryUnavailable>;
   }
 >()("fabula-ts/Bookshelf") {}
+
+/**
+ * What a read of one shelf registers under: the `shelves` group, and that shelf
+ * within it. Registering under both is what lets a future operation over many
+ * shelves wake every reader at once, with `{ shelves: [] }` (ADR 7).
+ */
+const shelfReadKeys = (shelfId: ShelfId) => ({ shelves: [shelfId] });
+
+/**
+ * What a write to one shelf invalidates: that shelf alone.
+ *
+ * Deliberately not the record form. `Reactivity` hashes a record as both the group
+ * and each id, on registration and on invalidation alike, so invalidating
+ * `{ shelves: [id] }` would also invalidate `shelves` and re-read every other
+ * shelf's readers (ADR 7).
+ */
+const shelfWriteKeys = (shelfId: ShelfId) => [`shelves:${shelfId}`];
 
 /**
  * Checks a candidate against `Book`'s own type, rather than its JSON form, and
@@ -68,10 +98,13 @@ const decodeBook = Schema.decodeUnknownEffect(Schema.toType(Book));
  * Builds a `Bookshelf` on top of a `BookRepository` and a `BookIds`.
  *
  * Provide it with a repository layer, such as the in-memory one from
- * `fabula-ts/testing`, and with `BookIds.layer` unless ids come from elsewhere:
+ * `fabula-ts/testing`, with `BookIds.layer` unless ids come from elsewhere, and with
+ * `Reactivity.layer`, which carries the invalidation the shelf streams run on:
  *
  * ```ts
- * Bookshelf.layer.pipe(Layer.provide([InMemoryBookRepository.layer(seed), BookIds.layer]))
+ * Bookshelf.layer.pipe(
+ *   Layer.provide([InMemoryBookRepository.layer(seed), BookIds.layer, Reactivity.layer]),
+ * )
  * ```
  *
  * `makeBookshelfAtoms` does this wiring itself, so hosts using the atoms pass only
@@ -89,35 +122,46 @@ export const layer = Layer.effect(
     // between processes must still refuse a taken position (see `storeBook`).
     const appends = yield* Semaphore.make(1);
 
+    const reactivity = yield* Reactivity.Reactivity;
+
+    // The read itself, shared by the one-shot `listShelf` and the stream that
+    // re-runs it.
+    const listShelf = (shelfId: ShelfId) =>
+      repository.listShelfEntries(shelfId).pipe(Effect.map((rows) => rows.map((row) => row.book)));
+
     return Bookshelf.of({
-      listShelf: (shelfId) =>
-        repository
-          .listShelfEntries(shelfId)
-          .pipe(Effect.map((rows) => rows.map((row) => row.book))),
+      listShelf,
 
       addBook: (shelfId, draft) =>
-        Effect.gen(function* () {
-          const book = yield* decodeBook({
-            ...draft,
-            id: yield* ids.next,
-            addedAt: yield* DateTime.now,
-          }).pipe(Effect.mapError((error) => new InvalidBook({ reason: error.message })));
+        // Invalidating after the write, not before, is what `mutation` does: an add
+        // that fails leaves the shelf's readers alone.
+        reactivity.mutation(
+          shelfWriteKeys(shelfId),
+          Effect.gen(function* () {
+            const book = yield* decodeBook({
+              ...draft,
+              id: yield* ids.next,
+              addedAt: yield* DateTime.now,
+            }).pipe(Effect.mapError((error) => new InvalidBook({ reason: error.message })));
 
-          yield* appends.withPermit(
-            Effect.gen(function* () {
-              const last = yield* repository.lastPosition(shelfId);
-              yield* repository.storeBook({
-                book,
-                entry: {
-                  shelfId,
-                  bookId: book.id,
-                  position: between(Option.getOrUndefined(last), undefined),
-                },
-              });
-            }),
-          );
-          return book;
-        }),
+            yield* appends.withPermit(
+              Effect.gen(function* () {
+                const last = yield* repository.lastPosition(shelfId);
+                yield* repository.storeBook({
+                  book,
+                  entry: {
+                    shelfId,
+                    bookId: book.id,
+                    position: between(Option.getOrUndefined(last), undefined),
+                  },
+                });
+              }),
+            );
+            return book;
+          }),
+        ),
+
+      shelfChanges: (shelfId) => reactivity.stream(shelfReadKeys(shelfId), listShelf(shelfId)),
     });
   }),
 );

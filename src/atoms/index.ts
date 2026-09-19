@@ -7,6 +7,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 import type { BookRepository } from "../BookRepository";
 import * as Bookshelf from "../Bookshelf";
@@ -24,8 +25,9 @@ import * as BookIds from "../BookIds";
  *   id returns the same atom.
  * - `addBook` — an action: write `{ shelfId, draft }` to it to add a book at the
  *   end of that shelf. Its value is an `AsyncResult` that is waiting while the
- *   call runs, then holds the added book or `ShelfNotFound`. A `shelf` atom that
- *   is already mounted does not refresh yet.
+ *   call runs, then holds the added book or `ShelfNotFound`. A mounted `shelf`
+ *   atom for that shelf re-reads itself once the add succeeds; other shelves are
+ *   left alone, and a failed add refreshes nothing.
  *
  * Ids come from `BookIds.layer`, so the repository layer is all a host provides.
  *
@@ -43,7 +45,11 @@ export const makeBookshelfAtoms = (layer: Layer.Layer<BookRepository>) => {
   const bookshelfLayer = Layer.fresh(Bookshelf.layer.pipe(Layer.provide([layer, BookIds.layer])));
   const runtime = Atom.runtime(bookshelfLayer);
   const shelf = Atom.family((shelfId: ShelfId) =>
-    runtime.atom(Bookshelf.Bookshelf.use((bookshelf) => bookshelf.listShelf(shelfId))),
+    runtime.atom(
+      Stream.unwrap(
+        Bookshelf.Bookshelf.use((bookshelf) => Effect.succeed(bookshelf.shelfChanges(shelfId))),
+      ),
+    ),
   );
 
   // A write must not be lost to the UI's lifecycle. An action atom interrupts its
