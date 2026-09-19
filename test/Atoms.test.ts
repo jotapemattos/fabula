@@ -8,6 +8,7 @@ import { Book, BookId, ShelfEntry, ShelfId } from "../src/Model.ts";
 import { layer as inMemoryLayer } from "../src/testing/InMemoryBookRepository.ts";
 
 const sciFi = Schema.decodeSync(ShelfId)("sci-fi");
+const reading = Schema.decodeSync(ShelfId)("currently-reading");
 const missing = Schema.decodeSync(ShelfId)("missing");
 
 const makeBook = (id: string, title: string): Book =>
@@ -28,10 +29,15 @@ const entry = (shelfId: ShelfId, book: Book, position: string): ShelfEntry =>
 // Each test builds its own layer from this function.
 const seededLayer = () =>
   inMemoryLayer({
-    shelves: [sciFi],
+    shelves: [sciFi, reading],
     books: [dune, foundation, hyperion],
     // Seeded out of order, so insertion order cannot pass for position order.
-    entries: [entry(sciFi, hyperion, "t"), entry(sciFi, dune, "a"), entry(sciFi, foundation, "k")],
+    entries: [
+      entry(sciFi, hyperion, "t"),
+      entry(sciFi, dune, "a"),
+      entry(sciFi, foundation, "k"),
+      entry(reading, dune, "a"),
+    ],
   });
 
 /** The seeded store, with every `storeBook` waiting for `release` to open first. */
@@ -124,7 +130,7 @@ describe("makeBookshelfAtoms", () => {
       assert.strictEqual(added.title, "Neuromancer");
       assert.deepStrictEqual(states, ["Initial", "Initial (waiting)", "Success"]);
 
-      // A fresh read of the shelf sees the book; a mounted one refreshing is FAB-9.
+      // A fresh read of the shelf sees the book.
       const books = yield* AtomRegistry.getResult(registry, shelf(sciFi));
       assert.deepStrictEqual(
         books.map((book) => book.title),
@@ -196,6 +202,108 @@ describe("makeBookshelfAtoms", () => {
       registry.dispose();
     }),
   );
+
+  it.effect("refreshes a mounted shelf atom once the add succeeds", () =>
+    Effect.gen(function* () {
+      const { shelf, addBook } = makeBookshelfAtoms(seededLayer());
+      const registry = AtomRegistry.make();
+
+      // Mounted, as a component reading the shelf would be.
+      const seen: Array<ReadonlyArray<string>> = [];
+      const unmount = registry.subscribe(
+        shelf(sciFi),
+        (result) => {
+          if (result._tag === "Success") seen.push(result.value.map((book) => book.title));
+        },
+        // As a component does: mounting reads the shelf, it does not wait to be told.
+        { immediate: true },
+      );
+      const unsubscribeAdd = registry.subscribe(addBook, () => {});
+      yield* settle;
+
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "Neuromancer", authors: [] } });
+      yield* AtomRegistry.getResult(registry, addBook, { suspendOnWaiting: true });
+      yield* settle;
+
+      // Nobody asked the shelf atom to refetch: the add's own keys did it.
+      assert.deepStrictEqual(seen.at(-1), ["Dune", "Foundation", "Hyperion", "Neuromancer"]);
+
+      unsubscribeAdd();
+      unmount();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("leaves a mounted atom for another shelf alone", () =>
+    Effect.gen(function* () {
+      const { shelf, addBook } = makeBookshelfAtoms(seededLayer());
+      const registry = AtomRegistry.make();
+
+      const other: Array<ReadonlyArray<string>> = [];
+      const unmountOther = registry.subscribe(
+        shelf(reading),
+        (result) => {
+          if (result._tag === "Success") other.push(result.value.map((book) => book.title));
+        },
+        { immediate: true },
+      );
+      const unmountSciFi = registry.subscribe(shelf(sciFi), () => {}, { immediate: true });
+      const unsubscribeAdd = registry.subscribe(addBook, () => {});
+      yield* settle;
+
+      // The shelf that was read first is not the shelf that is written to.
+      assert.deepStrictEqual(other, [["Dune"]]);
+
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "Neuromancer", authors: [] } });
+      yield* AtomRegistry.getResult(registry, addBook, { suspendOnWaiting: true });
+      yield* settle;
+
+      assert.deepStrictEqual(other, [["Dune"]]);
+
+      unsubscribeAdd();
+      unmountSciFi();
+      unmountOther();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("does not refresh a mounted shelf atom when the add fails", () =>
+    Effect.gen(function* () {
+      const { shelf, addBook } = makeBookshelfAtoms(seededLayer());
+      const registry = AtomRegistry.make();
+
+      const seen: Array<ReadonlyArray<string>> = [];
+      const unmount = registry.subscribe(
+        shelf(sciFi),
+        (result) => {
+          if (result._tag === "Success") seen.push(result.value.map((book) => book.title));
+        },
+        // As a component does: mounting reads the shelf, it does not wait to be told.
+        { immediate: true },
+      );
+      const unsubscribeAdd = registry.subscribe(addBook, () => {});
+      yield* settle;
+
+      // An empty title is rejected by the `Book` schema, so nothing is stored.
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "", authors: [] } });
+      yield* Effect.flip(AtomRegistry.getResult(registry, addBook, { suspendOnWaiting: true }));
+      yield* settle;
+
+      assert.deepStrictEqual(seen, [["Dune", "Foundation", "Hyperion"]]);
+
+      unsubscribeAdd();
+      unmount();
+      registry.dispose();
+    }),
+  );
+});
+
+/**
+ * Yields repeatedly, so a refresh a write set off has every chance to land before a
+ * test looks. A test that expects no refresh fails only after the same wait.
+ */
+const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
+  discard: true,
 });
 
 const describeResult = (result: AsyncResult.AsyncResult<unknown, unknown>): string =>

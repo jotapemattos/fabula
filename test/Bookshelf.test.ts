@@ -1,6 +1,7 @@
 import { assert, describe, it, layer } from "@effect/vitest";
-import { Brand, DateTime, Effect, Layer, Schema } from "effect";
+import { Brand, DateTime, Effect, Layer, Schema, Stream } from "effect";
 import { TestClock } from "effect/testing";
+import { Reactivity } from "effect/unstable/reactivity";
 import { BookIds } from "../src/BookIds.ts";
 import { Bookshelf, layer as bookshelfLayer } from "../src/Bookshelf.ts";
 import { BookRepository } from "../src/BookRepository.ts";
@@ -58,7 +59,9 @@ const countingIds = Layer.sync(BookIds, () => {
 });
 
 // Every read test only reads, so one layer is shared across them.
-const TestLayer = bookshelfLayer.pipe(Layer.provide([inMemoryLayer(seed), countingIds]));
+const TestLayer = bookshelfLayer.pipe(
+  Layer.provide([inMemoryLayer(seed), countingIds, Reactivity.layer]),
+);
 
 /**
  * The seeded store, recording every row it accepts in `stored`, so a test can see
@@ -89,7 +92,7 @@ const recording = (stored: Array<ShelfBook>) =>
  */
 const writeLayer = (stored: Array<ShelfBook> = []) =>
   Layer.merge(
-    bookshelfLayer.pipe(Layer.provide([recording(stored), countingIds])),
+    bookshelfLayer.pipe(Layer.provide([recording(stored), countingIds, Reactivity.layer])),
     TestClock.layer(),
   );
 
@@ -230,6 +233,106 @@ describe("Bookshelf.addBook", () => {
 
       const [stored] = yield* bookshelf.listShelf(empty);
       assert.deepStrictEqual(stored, added);
+    }).pipe(Effect.provide(writeLayer())),
+  );
+});
+
+/**
+ * Yields repeatedly, so a re-read a write set off has every chance to land before
+ * a test looks. A test that expects no re-read fails only after the same wait.
+ */
+const settle = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
+  discard: true,
+});
+
+/**
+ * Subscribes to a shelf's changes for the rest of the test, recording the titles of
+ * each list it emits. Returns once the first list has arrived.
+ */
+const watchShelf = (shelfId: ShelfId) =>
+  Effect.gen(function* () {
+    const bookshelf = yield* Bookshelf;
+    const emitted: Array<ReadonlyArray<string>> = [];
+    yield* Effect.forkScoped(
+      Stream.runForEach(bookshelf.shelfChanges(shelfId), (books) =>
+        Effect.sync(() => {
+          emitted.push(titles(books));
+        }),
+      ),
+    );
+    yield* settle;
+    return emitted;
+  });
+
+describe("Bookshelf.shelfChanges", () => {
+  it.effect("emits the shelf's books in position order to start with", () =>
+    Effect.gen(function* () {
+      const emitted = yield* watchShelf(sciFi);
+      assert.deepStrictEqual(emitted, [["Dune", "Foundation", "Hyperion"]]);
+    }).pipe(Effect.provide(writeLayer())),
+  );
+
+  it.effect("emits the shelf again after a book is added to it", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      const emitted = yield* watchShelf(sciFi);
+
+      yield* bookshelf.addBook(sciFi, draft("Neuromancer"));
+      yield* settle;
+
+      assert.deepStrictEqual(emitted, [
+        ["Dune", "Foundation", "Hyperion"],
+        ["Dune", "Foundation", "Hyperion", "Neuromancer"],
+      ]);
+    }).pipe(Effect.provide(writeLayer())),
+  );
+
+  it.effect("emits once per add, in order", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      const emitted = yield* watchShelf(empty);
+
+      yield* bookshelf.addBook(empty, draft("First"));
+      yield* settle;
+      yield* bookshelf.addBook(empty, draft("Second"));
+      yield* settle;
+
+      assert.deepStrictEqual(emitted, [[], ["First"], ["First", "Second"]]);
+    }).pipe(Effect.provide(writeLayer())),
+  );
+
+  it.effect("stays quiet when the book is added to another shelf", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      const emitted = yield* watchShelf(sciFi);
+
+      yield* bookshelf.addBook(reading, draft("Neuromancer"));
+      yield* settle;
+
+      assert.deepStrictEqual(emitted, [["Dune", "Foundation", "Hyperion"]]);
+    }).pipe(Effect.provide(writeLayer())),
+  );
+
+  it.effect("stays quiet when an add on the shelf fails", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      const emitted = yield* watchShelf(sciFi);
+
+      // Rejected by the `Book` schema, so the shelf never changes.
+      const error = yield* Effect.flip(bookshelf.addBook(sciFi, draft("")));
+      assert.instanceOf(error, InvalidBook);
+      yield* settle;
+
+      assert.deepStrictEqual(emitted, [["Dune", "Foundation", "Hyperion"]]);
+    }).pipe(Effect.provide(writeLayer())),
+  );
+
+  it.effect("fails with ShelfNotFound for a missing shelf", () =>
+    Effect.gen(function* () {
+      const bookshelf = yield* Bookshelf;
+      const error = yield* Effect.flip(Stream.runCollect(bookshelf.shelfChanges(missing)));
+      assert.instanceOf(error, ShelfNotFound);
+      assert.strictEqual(error.shelfId, missing);
     }).pipe(Effect.provide(writeLayer())),
   );
 });
