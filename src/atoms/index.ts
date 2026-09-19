@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 import type { BookRepository } from "../BookRepository";
 import * as Bookshelf from "../Bookshelf";
-import type { ShelfId } from "../Model";
+import type { BookDraft, ShelfId } from "../Model";
 import * as BookIds from "../BookIds";
 
 /**
@@ -37,5 +37,9 @@ export const makeBookshelfAtoms = (layer: Layer.Layer<BookRepository>) => {
     runtime.atom(Bookshelf.Bookshelf.use((bookshelf) => bookshelf.listShelf(shelfId))),
   );
 
-  return { shelf };
+  const addBook = runtime.fn((input: { readonly shelfId: ShelfId; readonly draft: BookDraft }) =>
+    Bookshelf.Bookshelf.use((bookshelf) => bookshelf.addBook(input.shelfId, input.draft)),
+  );
+
+  return { shelf, addBook };
 };

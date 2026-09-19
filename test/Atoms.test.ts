@@ -1,7 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
-import { DateTime, Effect, Schema } from "effect";
-import { AtomRegistry } from "effect/unstable/reactivity";
+import { DateTime, Effect, Latch, Layer, Schema } from "effect";
+import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 import { makeBookshelfAtoms } from "../src/atoms/index.ts";
+import { BookRepository } from "../src/BookRepository.ts";
 import { ShelfNotFound } from "../src/Errors.ts";
 import { Book, BookId, ShelfEntry, ShelfId } from "../src/Model.ts";
 import { layer as inMemoryLayer } from "../src/testing/InMemoryBookRepository.ts";
@@ -32,6 +33,19 @@ const seededLayer = () =>
     // Seeded out of order, so insertion order cannot pass for position order.
     entries: [entry(sciFi, hyperion, "t"), entry(sciFi, dune, "a"), entry(sciFi, foundation, "k")],
   });
+
+/** The seeded store, with every `storeBook` waiting for `release` to open first. */
+const heldWrites = (release: Latch.Latch) =>
+  Layer.effect(
+    BookRepository,
+    Effect.gen(function* () {
+      const repository = yield* BookRepository;
+      return BookRepository.of({
+        ...repository,
+        storeBook: (row) => release.await.pipe(Effect.andThen(repository.storeBook(row))),
+      });
+    }),
+  ).pipe(Layer.provide(seededLayer()));
 
 describe("makeBookshelfAtoms", () => {
   it.effect("resolves a shelf atom to its books in position order", () =>
@@ -86,4 +100,59 @@ describe("makeBookshelfAtoms", () => {
       registry.dispose();
     }),
   );
+
+  it.effect("runs addBook, reporting progress and then the added book", () =>
+    Effect.gen(function* () {
+      // The in-memory store answers synchronously, so the write is held open until
+      // the test releases it: otherwise the in-progress state is never observable.
+      const release = Latch.makeUnsafe();
+      const { shelf, addBook } = makeBookshelfAtoms(heldWrites(release));
+      const registry = AtomRegistry.make();
+
+      // Every state the action atom passes through, as the UI would see it.
+      const states = [describeResult(registry.get(addBook))];
+      const unsubscribe = registry.subscribe(addBook, (result) => {
+        states.push(describeResult(result));
+      });
+
+      registry.set(addBook, { shelfId: sciFi, draft: { title: "Neuromancer", authors: [] } });
+      assert.isTrue(registry.get(addBook).waiting, "addBook should be in progress");
+
+      yield* release.open;
+      const added = yield* AtomRegistry.getResult(registry, addBook, { suspendOnWaiting: true });
+
+      assert.strictEqual(added.title, "Neuromancer");
+      assert.deepStrictEqual(states, ["Initial", "Initial (waiting)", "Success"]);
+
+      // A fresh read of the shelf sees the book; a mounted one refreshing is FAB-9.
+      const books = yield* AtomRegistry.getResult(registry, shelf(sciFi));
+      assert.deepStrictEqual(
+        books.map((book) => book.title),
+        ["Dune", "Foundation", "Hyperion", "Neuromancer"],
+      );
+
+      unsubscribe();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("surfaces ShelfNotFound in addBook's result for a missing shelf", () =>
+    Effect.gen(function* () {
+      const { addBook } = makeBookshelfAtoms(seededLayer());
+      const registry = AtomRegistry.make();
+      const unsubscribe = registry.subscribe(addBook, () => {});
+
+      registry.set(addBook, { shelfId: missing, draft: { title: "Neuromancer", authors: [] } });
+      const error = yield* Effect.flip(AtomRegistry.getResult(registry, addBook));
+
+      assert.instanceOf(error, ShelfNotFound);
+      assert.strictEqual(error.shelfId, missing);
+
+      unsubscribe();
+      registry.dispose();
+    }),
+  );
 });
+
+const describeResult = (result: AsyncResult.AsyncResult<unknown, unknown>): string =>
+  result.waiting ? `${result._tag} (waiting)` : result._tag;
