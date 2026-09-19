@@ -71,6 +71,12 @@ export class BookRepository extends Context.Service<
      * Both in one call, so a book with no entry — or an entry pointing at no book
      * — can never exist, whatever the storage. Fails with `ShelfNotFound` if the
      * shelf does not exist.
+     *
+     * The row must be new: its book id unused, and its position not already taken
+     * on that shelf. A row that is not is a bug in the caller, and must be refused
+     * rather than stored — as a defect, or as `RepositoryUnavailable` wrapping a
+     * storage constraint — since storing it would leave two books with one id, or
+     * two entries whose order is undefined.
      */
     readonly storeBook: (
       row: ShelfBook,

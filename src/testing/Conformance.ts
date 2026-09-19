@@ -8,6 +8,7 @@
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { BookRepository } from "../BookRepository";
@@ -170,7 +171,8 @@ const storesBookAndEntry: ConformanceCase = {
   seed: {
     shelves: [sciFi],
     books: [dune, foundation],
-    // Seeded out of order, so the stored book ending up last cannot be insertion order.
+    // Seeded out of order, so the books already there must be sorted by position.
+    // The stored book is also inserted last: where it lands says nothing about order.
     entries: [entry(sciFi, foundation, "k"), entry(sciFi, dune, "a")],
   },
   test: Effect.gen(function* () {
@@ -253,6 +255,51 @@ const lastPositionFollowsOrder: ConformanceCase = {
   }),
 };
 
+const duneOnSciFi = entry(sciFi, dune, "k");
+
+const refusesRowThatIsNotNew: ConformanceCase = {
+  name: "refuses a row whose book id or position is already taken",
+  seed: { shelves: [sciFi], books: [dune], entries: [duneOnSciFi] },
+  test: Effect.gen(function* () {
+    const repository = yield* BookRepository;
+
+    // How it is refused is up to the storage (a defect, or a wrapped constraint
+    // violation); only that it is refused, and nothing changes, is checked.
+    const sameId = yield* Effect.exit(
+      repository.storeBook({
+        book: { ...dune, title: "Dune, again" },
+        entry: {
+          shelfId: sciFi,
+          bookId: dune.id,
+          position: between(duneOnSciFi.position, undefined),
+        },
+      }),
+    );
+    yield* check(
+      Exit.isFailure(sameId),
+      "storing a book id that is already stored should be refused",
+    );
+
+    const samePosition = yield* Effect.exit(
+      repository.storeBook({
+        book: neuromancer,
+        entry: { shelfId: sciFi, bookId: neuromancer.id, position: duneOnSciFi.position },
+      }),
+    );
+    yield* check(
+      Exit.isFailure(samePosition),
+      `storing at a position already taken on shelf ${sciFi} should be refused`,
+    );
+
+    const rows = yield* repository.listShelfEntries(sciFi);
+    yield* checkBooks(sciFi, rows, [dune]);
+    yield* check(
+      rows[0]?.book.title === dune.title,
+      `shelf ${sciFi}: the book already stored should be unchanged`,
+    );
+  }),
+};
+
 /** Every conformance case. Run each against a fresh layer built from its own seed. */
 export const cases: ReadonlyArray<ConformanceCase> = [
   positionOrder,
@@ -261,4 +308,5 @@ export const cases: ReadonlyArray<ConformanceCase> = [
   emptyVersusMissing,
   storesBookAndEntry,
   lastPositionFollowsOrder,
+  refusesRowThatIsNotNew,
 ];

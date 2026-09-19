@@ -26,6 +26,17 @@ export class InvalidSeed extends Error {
 }
 
 /**
+ * A row passed to `storeBook` that is not new: its book id is already stored, or
+ * its position is already taken on that shelf.
+ *
+ * The port makes this the caller's bug, so `storeBook` dies with it rather than
+ * storing a second book with the same id or two entries with no defined order.
+ */
+export class DuplicateRow extends Error {
+  override readonly name = "DuplicateRow";
+}
+
+/**
  * The repository's state: which shelves exist, and every entry already joined to
  * its book, so a row can never point at a book that is not there.
  */
@@ -107,6 +118,24 @@ export const layer = (seed: Seed): Layer.Layer<BookRepository> =>
         Effect.gen(function* () {
           if (!shelves.has(row.entry.shelfId)) {
             return yield* new ShelfNotFound({ shelfId: row.entry.shelfId });
+          }
+          if (rows.some((existing) => existing.book.id === row.book.id)) {
+            return yield* Effect.die(
+              new DuplicateRow(`book ${JSON.stringify(row.book.id)} is already stored`),
+            );
+          }
+          if (
+            rows.some(
+              (existing) =>
+                existing.entry.shelfId === row.entry.shelfId &&
+                existing.entry.position === row.entry.position,
+            )
+          ) {
+            return yield* Effect.die(
+              new DuplicateRow(
+                `position ${JSON.stringify(row.entry.position)} is already taken on shelf ${JSON.stringify(row.entry.shelfId)}`,
+              ),
+            );
           }
           rows.push(row);
         }),
