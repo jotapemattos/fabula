@@ -37,6 +37,14 @@ export class Bookshelf extends Context.Service<
     readonly listShelf: (
       shelfId: ShelfId,
     ) => Effect.Effect<ReadonlyArray<Book>, ShelfNotFound | RepositoryUnavailable>;
+
+    /**
+     * Creates a book from `draft` and places it after every book on the shelf.
+     *
+     * The bookshelf assigns `id` (from `BookIds`) and `addedAt` (from the `Clock`),
+     * and succeeds with the book as stored. A shelf that does not exist fails with
+     * `ShelfNotFound`, and nothing is stored.
+     */
     readonly addBook: (
       shelfId: ShelfId,
       draft: BookDraft,
@@ -45,14 +53,17 @@ export class Bookshelf extends Context.Service<
 >()("fabula-ts/Bookshelf") {}
 
 /**
- * Builds a `Bookshelf` on top of a `BookRepository`.
+ * Builds a `Bookshelf` on top of a `BookRepository` and a `BookIds`.
  *
  * Provide it with a repository layer, such as the in-memory one from
- * `fabula-ts/testing`:
+ * `fabula-ts/testing`, and with `BookIds.layer` unless ids come from elsewhere:
  *
  * ```ts
- * Bookshelf.layer.pipe(Layer.provide(InMemoryBookRepository.layer(seed)))
+ * Bookshelf.layer.pipe(Layer.provide([InMemoryBookRepository.layer(seed), BookIds.layer]))
  * ```
+ *
+ * `makeBookshelfAtoms` does this wiring itself, so hosts using the atoms pass only
+ * the repository layer.
  */
 export const layer = Layer.effect(
   Bookshelf,
