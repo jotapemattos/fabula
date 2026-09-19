@@ -64,6 +64,10 @@ export class Bookshelf extends Context.Service<
      * Emits the current books, then a fresh list each time an operation on this
      * shelf completes — `addBook`, today. A shelf that does not exist fails with
      * `ShelfNotFound`, and the stream ends there: a missing shelf stays missing.
+     *
+     * Any failed read ends it the same way, including a `RepositoryUnavailable`
+     * that a later read would have survived: the subscription does not retry, so a
+     * caller that wants to recover subscribes again.
      */
     readonly shelfChanges: (
       shelfId: ShelfId,

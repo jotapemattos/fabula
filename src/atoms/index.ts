@@ -17,15 +17,20 @@ import * as BookIds from "../BookIds";
 /**
  * Builds the bookshelf's atoms on top of a host-supplied repository layer.
  *
- * Call it once, beside the host's other layer wiring, and keep the result: each
- * call has its own state, even when two calls share a layer or a registry.
+ * Call it once, beside the host's other layer wiring, and keep the result: each call
+ * reads and writes its own bookshelf, even when two calls share a layer or a registry.
+ * Invalidation is the exception: a registry has one `Reactivity`, so an add through one
+ * call also re-reads another call's mounted atoms for the same shelf id. Each still
+ * re-reads its own repository, so the books are right; the extra read is wasted work.
  *
  * - `shelf(shelfId)` — the books on a shelf, in position order, as an
  *   `AsyncResult`. It fails with `ShelfNotFound` for a missing shelf. The same
  *   id returns the same atom.
  * - `addBook` — an action: write `{ shelfId, draft }` to it to add a book at the
  *   end of that shelf. Its value is an `AsyncResult` that is waiting while the
- *   call runs, then holds the added book or `ShelfNotFound`. A mounted `shelf`
+ *   call runs, then holds the added book, or `ShelfNotFound`, `InvalidBook` or
+ *   `RepositoryUnavailable` — `addBook`'s whole error set, which a host matching on
+ *   the result must cover. A mounted `shelf`
  *   atom for that shelf re-reads itself once the add succeeds; other shelves are
  *   left alone, and a failed add refreshes nothing.
  *
