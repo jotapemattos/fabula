@@ -20,3 +20,7 @@ was chosen over, and what it costs.
 | [13](0013-toolchain.md) | Bun, Vitest, tsdown, changesets, Effect pinned |
 | [14](0014-single-package.md) | One package with subpath modules — supersedes 12 |
 | [15](0015-runner-agnostic-conformance.md) | The conformance suite is runner-agnostic |
+| [16](0016-sqlite-first.md) | SQLite first, with the design held dialect-clean |
+| [17](0017-library-owned-schema.md) | The library owns the schema; migrations never run implicitly |
+| [18](0018-optimistic-positions.md) | Optimistic positions: storage refuses, the bookshelf retries |
+| [19](0019-authors-as-json.md) | A book's authors live as a JSON array on the book row |
